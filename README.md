@@ -1,13 +1,5 @@
-# Sample Hardhat Project
+# 架构升级版策略聚合器
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
-
-Try running some of the following tasks:
-
-```shell
-npx hardhat help
-npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.js
-```
+## 当前主要升级点
+1.引入Registry模块统一管理权限与地址，降低合约耦合程度与依赖程度
+2.引入VaultDataTypes,借鉴于AAVE风控参数管理模式，统一管理风控参数
