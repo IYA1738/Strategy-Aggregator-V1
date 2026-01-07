@@ -2,8 +2,13 @@
 pragma solidity 0.8.33;
 
 import "contracts/protocol/Utils/TimeDelayOwnable2Step.sol";
+import "contracts/protocol/Registry/OracleConfigRegistry.sol";
 
-contract Registry is TimeDelayOwnable2Step {
+interface IOracleAggregatorOwner {
+    function getOwner() external view returns (address);
+}
+
+contract Registry is TimeDelayOwnable2Step, OracleConfigRegistry {
     mapping(address => bool) private registriedVaults;
     mapping(address => bool) private registriedStrategies;
 
@@ -35,6 +40,18 @@ contract Registry is TimeDelayOwnable2Step {
     modifier onlyTimeLock() {
         require(msg.sender == timeLock, "Ownable: caller is not the timelock");
         _;
+    }
+
+    modifier onlyOracleAggregatorOwner() {
+        _checkOracleAggregatorOwnerCall();
+        _;
+    }
+
+    function _checkOracleAggregatorOwnerCall() private view {
+        require(
+            msg.sender == IOracleAggregatorOwner(oracleAggregator).getOwner(),
+            "Registry: caller is not the oracle aggregator owner"
+        );
     }
 
     constructor(
@@ -97,6 +114,36 @@ contract Registry is TimeDelayOwnable2Step {
         emit SetValueInterpreter(_valueInterpreter);
     }
 
+    function setVaultOracleConfig(
+        address _vault,
+        OracleConfig memory _config
+    ) external onlyOracleAggregatorOwner {
+        _setVaultOracleConfig(_vault, _config);
+    }
+
+    function getVaultOracleConfig(address _vault) external view returns (OracleConfig memory) {
+        return _getVaultOracleConfig(_vault);
+    }
+
+    function setTokenOracleOverride(
+        address _vault,
+        address _token,
+        TokenOracleOverride memory _override
+    ) external onlyOracleAggregatorOwner {
+        _setTokenOracleOverride(_vault, _token, _override);
+    }
+
+    function getTokenOracleOverride(
+        address _vault,
+        address _token
+    ) external view returns (TokenOracleOverride memory) {
+        return _getTokenOracleOverride(_vault, _token);
+    }
+
+    function hasTokenOracleOverride(address _vault, address _token) external view returns (bool) {
+        return _hasTokenOracleOverride(_vault, _token);
+    }
+
     // ====== getter ======
     function getOracleAggregator() external view returns (address) {
         return oracleAggregator;
@@ -112,5 +159,9 @@ contract Registry is TimeDelayOwnable2Step {
 
     function getValueInterpreter() external view returns (address) {
         return valueInterpreter;
+    }
+
+    function isVaultRegistered(address _vault) external view returns (bool) {
+        return registriedVaults[_vault];
     }
 }

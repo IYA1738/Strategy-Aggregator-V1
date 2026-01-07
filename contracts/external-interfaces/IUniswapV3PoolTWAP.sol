@@ -1,4 +1,25 @@
-interface IUniswapV3PoolTWAP {
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0 <0.9.0;
+
+interface IUniswapV3PoolMinimal {
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+
+    function liquidity() external view returns (uint128);
+
+    function slot0()
+        external
+        view
+        returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
+
     function observe(
         uint32[] calldata secondsAgos
     )
@@ -6,6 +27,6 @@ interface IUniswapV3PoolTWAP {
         view
         returns (
             int56[] memory tickCumulatives,
-            uint160[] memory secondsPerLiquidityCumulativeX128
+            uint160[] memory secondsPerLiquidityCumulativeX128s
         );
 }

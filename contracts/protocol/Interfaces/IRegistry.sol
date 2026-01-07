@@ -13,4 +13,10 @@ interface IRegistry {
     function getOracleAggregatorOwner() external view returns (address);
 
     function getOracleAggregator() external view returns (address);
+
+    function getPythPriceFeed() external view returns (address);
+
+    function getChainlinkPriceFeed() external view returns (address);
+
+    function isVaultRegistried(address _vault) external view returns (bool);
 }

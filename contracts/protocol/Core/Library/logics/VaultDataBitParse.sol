@@ -13,6 +13,9 @@ library VaultDataBitParse {
     uint256 internal constant BIT_PAUSED = 73;
     uint256 internal constant BIT_REENTRANTGUARD = 74;
 
+    uint256 internal constant MIN_DEPOSIT_AMOUNT_E18_OFFSET = 75;
+    uint256 internal constant MIN_DEPOSIT_AMOUNT_E18_BITS = 96;
+
     uint256 internal constant BPS_RATE_BITS = 16;
 
     error BitOverflow();
@@ -110,5 +113,17 @@ library VaultDataBitParse {
 
     function setIsReentrantGuard(uint256 word, bool value) internal pure returns (uint256) {
         return setBool(word, BIT_REENTRANTGUARD, value);
+    }
+
+    function minDepositAmountE18(uint256 word) internal pure returns (uint96) {
+        return uint96(get(word, MIN_DEPOSIT_AMOUNT_E18_OFFSET, MIN_DEPOSIT_AMOUNT_E18_BITS));
+    }
+
+    function setMinDepositAmountE18(uint256 word, uint96 value) internal pure returns (uint256) {
+        return set(word, MIN_DEPOSIT_AMOUNT_E18_OFFSET, MIN_DEPOSIT_AMOUNT_E18_BITS, value);
+    }
+
+    function getFlags(uint256 word) internal pure returns (bool, bool, bool) {
+        return (isActive(word), isPaused(word), isReentrantGuard(word));
     }
 }
