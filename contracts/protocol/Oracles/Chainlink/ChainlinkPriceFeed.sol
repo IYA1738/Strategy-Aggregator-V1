@@ -4,14 +4,15 @@ pragma solidity >=0.8.0 <0.9.0;
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import "contracts/protocol/Oracles/Chainlink/IChainlinkPriceFeed.sol";
 import "contracts/protocol/Interfaces/IRegistry.sol";
+import "contracts/protocol/Utils/WadMath.sol";
 
 contract ChainLinkPriceFeed is IChainlinkPriceFeed {
+    using WadMath for uint256;
     mapping(address => address) public priceFeeds; // baseToken => priceFeedAddress
 
     address public registry;
 
     uint256 public constant MAX_EXPIRED_TIME = 1000 days;
-    uint256 public expiredTime;
 
     event PriceFeedUpdated(address indexed token, address indexed priceFeed);
     event ExpiredTimeUpdated(uint256 expiredTime);
@@ -39,17 +40,15 @@ contract ChainLinkPriceFeed is IChainlinkPriceFeed {
         require(msg.sender == agg, "ChainLinkPriceFeed: Caller is not the OraclesAggregator");
     }
 
-    constructor(address _registry, uint256 _expiredTime) {
+    constructor(address _registry) {
         require(_registry != address(0), "ChainLinkPriceFeed: Invalid registry");
-        require(
-            _expiredTime <= MAX_EXPIRED_TIME,
-            "ChainLinkPriceFeed: Exceeded maximum expired time"
-        );
         registry = _registry;
-        expiredTime = _expiredTime;
     }
 
-    function getPrice(address _tokenA) external view onlyOraclesAggregator returns (uint256) {
+    function getPrice(
+        address _tokenA,
+        uint256 _expiredTime
+    ) external view override onlyOraclesAggregator returns (uint256, uint8) {
         address feed = priceFeeds[_tokenA];
         require(feed != address(0), "ChainLinkPriceFeed: Price feed not set for token");
 
@@ -58,26 +57,14 @@ contract ChainLinkPriceFeed is IChainlinkPriceFeed {
 
         require(price > 0, "ChainLinkPriceFeed: Invalid price data");
         require(
-            block.timestamp - updatedAt <= expiredTime,
+            block.timestamp - updatedAt <= _expiredTime,
             "ChainLinkPriceFeed: Price data is expired"
         );
 
-        uint8 decimals = priceFeed.decimals();
-        require(decimals <= 18, "ChainLinkPriceFeed: Unsupported decimals");
-
-        return uint256(price) * (10 ** (18 - decimals));
+        return (uint256(price).toWad(priceFeed.decimals()), 18); // normalized to 1E18, report 18
     }
 
-    function setExpiredTime(uint256 _expiredTime) external onlyOraclesAggregatorOwner {
-        require(
-            _expiredTime <= MAX_EXPIRED_TIME,
-            "ChainLinkPriceFeed: Exceeded maximum expired time"
-        );
-        expiredTime = _expiredTime;
-        emit ExpiredTimeUpdated(_expiredTime);
-    }
-
-    function setPriceFeed(address _tokenA, address _priceFeed) external onlyOraclesAggregatorOwner {
+    function setPriceFeed(address _tokenA, address _priceFeed) external override onlyOraclesAggregatorOwner {
         require(_tokenA != address(0), "ChainLinkPriceFeed: Invalid token");
         require(_priceFeed != address(0), "ChainLinkPriceFeed: Invalid priceFeed");
         require(
@@ -89,7 +76,7 @@ contract ChainLinkPriceFeed is IChainlinkPriceFeed {
         emit PriceFeedUpdated(_tokenA, _priceFeed);
     }
 
-    function isPairExist(address _tokenA) external view returns (bool) {
+    function isPairExist(address _tokenA) external view override returns (bool) {
         return priceFeeds[_tokenA] != address(0);
     }
 }

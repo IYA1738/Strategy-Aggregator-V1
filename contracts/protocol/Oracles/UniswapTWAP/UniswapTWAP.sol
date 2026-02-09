@@ -24,7 +24,7 @@ contract UniswapTWAP {
 
     function _meanTick(address _pool, uint32 _period) internal view returns (int24) {
         require(_period != 0, "Period is zero");
-        uint32;
+        uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = _period;
         secondsAgos[1] = 0;
         (int56[] memory tickCumulatives, ) = IUniswapV3PoolMinimal(_pool).observe(secondsAgos);

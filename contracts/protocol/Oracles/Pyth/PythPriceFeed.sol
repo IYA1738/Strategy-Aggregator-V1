@@ -6,6 +6,8 @@ import "contracts/protocol/Interfaces/IRegistry.sol";
 import "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 
+// 后续记得补上置信度检测
+
 contract PythPriceFeed is IPythPriceFeed {
     IPyth public immutable PYTH;
 
@@ -13,11 +15,10 @@ contract PythPriceFeed is IPythPriceFeed {
 
     address public registry;
 
-    uint256 public constant MAX_EXPIRED_TIME = 1000 days;
-    uint256 public expiredTime;
+    uint256 public constant MAX_EXPIRED_TIME = 1 days;
+    uint16 public constant BPS = 10_000;
 
     event PythPriceIdSet(address indexed token, bytes32 indexed priceId);
-    event ExpiredTimeUpdated(uint256 expiredTime);
 
     modifier onlyOraclesAggregatorOwner() {
         _checkOraclesAggregatorOwner();
@@ -39,52 +40,48 @@ contract PythPriceFeed is IPythPriceFeed {
         require(msg.sender == agg, "PythPriceFeed: Caller is not the OraclesAggregator");
     }
 
-    constructor(address _registry, address _pyth, uint256 _expiredTime) {
+    constructor(address _registry, address _pyth) {
         require(_registry != address(0), "PythPriceFeed: Invalid registry");
         require(_pyth != address(0), "PythPriceFeed: Invalid Pyth address");
-        require(_expiredTime <= MAX_EXPIRED_TIME, "PythPriceFeed: Exceeded maximum expired time");
 
         registry = _registry;
         PYTH = IPyth(_pyth);
-        expiredTime = _expiredTime;
     }
 
     function getPrice(
-        address _tokenA
-    ) external view override onlyOraclesAggregator returns (uint256 priceE18, uint256 publishTime) {
+        address _tokenA,
+        uint256 _expiredTime,
+        uint16 _pythConfThreshold
+    ) external view onlyOraclesAggregator override returns (uint256 price, int32 expo) {
+        require(_expiredTime <= MAX_EXPIRED_TIME, "PythPriceFeed: Exceeded maximum expired time");
+
         bytes32 priceId = _pythPriceIds[_tokenA];
         require(priceId != bytes32(0), "PythPriceFeed: Price ID not set for token");
 
-        PythStructs.Price memory p = PYTH.getPriceNoOlderThan(priceId, expiredTime);
+        PythStructs.Price memory p = PYTH.getPriceNoOlderThan(priceId, _expiredTime);
         require(p.price > 0, "PythPriceFeed: Invalid price from Pyth");
-
-        int256 price = p.price;
-        int256 expo = int256(p.expo);
-
-        int256 targetExpo = 18 + expo;
-
-        if (targetExpo >= 0) {
-            uint256 factor = 10 ** uint256(targetExpo);
-            priceE18 = uint256(price) * factor;
-        } else {
-            uint256 factor = 10 ** uint256(-targetExpo);
-            priceE18 = uint256(price) / factor;
-        }
-
-        publishTime = p.publishTime;
+        _checkPythConfidence(p.price, p.conf, _pythConfThreshold);
+        price = uint256(uint64(p.price));
+        expo = p.expo;
     }
 
-    function setExpiredTime(uint256 _expiredTime) external onlyOraclesAggregatorOwner {
-        require(_expiredTime <= MAX_EXPIRED_TIME, "PythPriceFeed: Exceeded maximum expired time");
-        expiredTime = _expiredTime;
-        emit ExpiredTimeUpdated(_expiredTime);
+    function _checkPythConfidence(
+        int64 _price,
+        uint64 _conf,
+        uint16 _pythConfThreshold
+    ) private view {
+        require(
+            // price强转uint64不会溢出, 根据上下文可保证 0 < _price < int64.max < uint64.max
+            (_conf * BPS) / uint64(_price) <= _pythConfThreshold,
+            "PythPriceFeed: Price confidence too low"
+        );
     }
 
-    function isPairExist(address _tokenA) external view returns (bool) {
+    function isPairExist(address _tokenA) external view override returns (bool) {
         return _pythPriceIds[_tokenA] != bytes32(0);
     }
 
-    function setPythPriceId(address token, bytes32 priceId) external onlyOraclesAggregatorOwner {
+    function setPythPriceId(address token, bytes32 priceId) external override onlyOraclesAggregatorOwner {
         require(token != address(0), "PythPriceFeed: Invalid token address");
         require(priceId != bytes32(0), "PythPriceFeed: Invalid priceId");
         _pythPriceIds[token] = priceId;

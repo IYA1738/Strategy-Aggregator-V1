@@ -37,6 +37,7 @@ contract VaultComptroller is TimeDelayOwnable2Step {
 
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint8 internal reentrancyGuard;
+    uint8 internal reversedMutex; // 反向锁 保证任何对vault的调用必须经过comptroller的受控流程
 
     event Deposit(
         address indexed user,
@@ -55,6 +56,12 @@ contract VaultComptroller is TimeDelayOwnable2Step {
         uint256[] payoutAmount
     );
 
+    event AuthorizeStrategySpending(
+        address indexed vault,
+        address indexed strategy,
+        uint256 amount
+    );
+
     modifier nonReentrant() {
         _checkReentrant();
         _;
@@ -66,9 +73,20 @@ contract VaultComptroller is TimeDelayOwnable2Step {
         reentrancyGuard = 2;
     }
 
+    modifier openGate() {
+        reversedMutex = 2;
+        _;
+        reversedMutex = 1;
+    }
+
+    function getReversedMutex() public view returns (uint8) {
+        return reversedMutex;
+    }
+
     constructor(address _registry, uint256 _delay) {
         REGISTRY = _registry;
         reentrancyGuard = 1;
+        reversedMutex = 1;
         __init_Ownable(msg.sender, _delay);
     }
 
@@ -78,21 +96,20 @@ contract VaultComptroller is TimeDelayOwnable2Step {
         address _asset,
         uint256 _amount,
         uint256 _minSharesOut
-    ) external payable nonReentrant {
+    ) external payable nonReentrant openGate {
         if (_asset == ETH) {
             require(msg.value == _amount, "VaultComptroller: msg.value not equal amount");
             IWETH(WETH).deposit{value: _amount}();
             _asset = WETH;
         }
-        uint8 decimals = _validateDeposit(_vault, _amount); // 校验vault注册，状态，最小存款金额
+        uint8 decimals = _validateDeposit(_vault, _asset, _amount); // 校验vault注册，状态，最小存款金额
         // 先转账, 再更新状态
         if (_asset == WETH && msg.value > 0) {
             // WETH已经在合约内了
             IERC20(WETH).safeTransfer(_vault, _amount);
         } else {
-            IERC20(_asset).safeTransferFrom(msg.sender, address(this), _amount);
+            IERC20(_asset).safeTransferFrom(msg.sender, _vault, _amount);
         }
-        IERC20(_asset).safeTransferFrom(msg.sender, _vault, _amount);
         uint256 sharesOut = _preDepositSetUp(_vault, _asset, _amount, _minSharesOut, decimals);
         IVault(_vault).mint(msg.sender, sharesOut);
         emit Deposit(msg.sender, _vault, _asset, _amount, sharesOut);
@@ -125,11 +142,17 @@ contract VaultComptroller is TimeDelayOwnable2Step {
 
         // 计算sharesOut， sharesOut = (amountAfterFee / nav) * totalShares
         uint256 totalShares = IVault(_vault).totalSupply(); // 所有Shares都是18位精度
-        uint256 sharesOut = amountAfterFee.toWad(decimals).mulDiv(
-            totalShares,
-            nav,
-            Math.Rounding.Floor
-        ); // sharesOut向下取整，防止多发shares被套利, 精度为18位
+        uint256 sharesOut;
+        if (totalShares == 0 || nav == 0) {
+            // 初始铸造：1:1 以18位精度
+            sharesOut = amountAfterFee.toWad(decimals);
+        } else {
+            sharesOut = amountAfterFee.toWad(decimals).mulDiv(
+                totalShares,
+                nav,
+                Math.Rounding.Floor
+            ); // sharesOut向下取整，防止多发shares被套利, 精度为18位
+        }
         require(sharesOut >= _minSharesOut, "VaultComptroller: sharesOut less than minSharesOut");
 
         // 记录Deposit时间戳
@@ -172,8 +195,8 @@ contract VaultComptroller is TimeDelayOwnable2Step {
         address _vault,
         address _recipient,
         uint256 _sharesAmount
-    ) external nonReentrant returns (address[] memory payoutAssets, address[] memory payoutAmount) {
-        _validateRedeem(_vault);
+    ) external nonReentrant openGate returns (address[] memory, uint256[] memory) {
+        _validateRedeem(_vault, _sharesAmount);
 
         uint256 sharesAmountAfterFee = _preRedeemSetUp(_vault, _sharesAmount);
 
@@ -182,13 +205,16 @@ contract VaultComptroller is TimeDelayOwnable2Step {
 
         address[] memory payoutAssets = IVault(_vault).trackedAssets();
         uint256 len = payoutAssets.length;
-        address[] memory payoutAmount = new address[](len);
+        uint256[] memory payoutAmount = new uint256[](len);
 
         for (uint256 i = 0; i < len; ) {
             address asset = payoutAssets[i];
             uint256 balance = IERC20(asset).balanceOf(_vault);
             if (balance == 0) {
-                payoutAmount.push(0);
+                payoutAmount[i] = 0;
+                unchecked {
+                    i++;
+                }
                 continue;
             }
             // amount需要floor
@@ -197,7 +223,7 @@ contract VaultComptroller is TimeDelayOwnable2Step {
                 totalSupply_snapshot,
                 Math.Rounding.Floor
             );
-            payoutAmount.push(amount);
+            payoutAmount[i] = amount;
             IVault(_vault).withdrawTo(_recipient, asset, amount);
             unchecked {
                 i++; // payoutLen必然是不会溢出
@@ -259,6 +285,42 @@ contract VaultComptroller is TimeDelayOwnable2Step {
         require(
             block.timestamp >= userLastDepositTime + uint256(redeemCooldownTime),
             "VaultComptroller: redeem in cooldown period"
+        );
+    }
+
+    function authorizeStrategySpending(
+        address _vault,
+        address _strategy,
+        uint256 _amount
+    ) external {
+        _validateAuthorizeStrategySpending(_vault, _strategy, _amount);
+        IVault(_vault).authorizeStrategySpending(_strategy, _amount);
+        emit AuthorizeStrategySpending(_vault, _strategy, _amount);
+    }
+
+    function _validateAuthorizeStrategySpending(
+        address _vault,
+        address _strategy,
+        uint256 _amount
+    ) internal view {
+        require(
+            IRegistry(REGISTRY).isAuthorizedVaultToStrategy(_vault, _strategy),
+            "VaultComptroller: unauthorized Vault To Strategy"
+        );
+        VaultDataTypes.VaultRiskConfig memory riskConfig = IVault(_vault).getVaultRiskConfig();
+        uint16 minIdleRate = riskConfig.word.getMinIdleRate();
+        uint16 maxDeployFundRate = riskConfig.word.getMaxDeployFundRate();
+        address valueInterpreter = IRegistry(REGISTRY).getValueInterpreter();
+        uint256 nav = IValueInterpreter(valueInterpreter).getVaultNAV(_vault); //所有Nav都基于18位精度计算
+        uint256 minIdleAmount = nav.mulDiv(minIdleRate, BPS_DENOMINATOR, Math.Rounding.Ceil);
+        uint256 maxDeployFundAmount = nav.mulDiv(
+            maxDeployFundRate,
+            BPS_DENOMINATOR,
+            Math.Rounding.Floor
+        );
+        require(
+            _amount >= nav - minIdleAmount && _amount <= maxDeployFundAmount,
+            "VaultComptroller: amount out of range"
         );
     }
 }

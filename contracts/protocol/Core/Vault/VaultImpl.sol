@@ -14,6 +14,21 @@ contract VaultImpl is VaultImplStorage, Initializable, ShareBase {
     using SafeERC20 for IERC20;
 
     event ApprovalToStrategy(address indexed spender, uint256 amount);
+    event WithdrawTo(address indexed to, address asset, uint256 amount);
+
+    modifier onlyDuringComptrollerFlow() {
+        _checkComptrollerFlow();
+        _;
+    }
+
+    function _checkComptrollerFlow() private view {
+        address comptroller = IRegistry(registry).getComptroller();
+        require(msg.sender == comptroller, "VaultImpl: caller is not the comptroller");
+        require(
+            IVaultComptroller(comptroller).getReversedMutex() == 2,
+            "VaultImpl: not during comptroller flow"
+        ); //验证反向锁
+    }
 
     function initialize(
         address _denominationAsset,
@@ -23,7 +38,7 @@ contract VaultImpl is VaultImplStorage, Initializable, ShareBase {
     ) external Initializer {
         denominationAsset = _denominationAsset;
         registry = _registry;
-        _initShares(_name, _symbol);
+        _initShares(_name, _symbol);ß
     }
 
     modifier onlyOwner() {
@@ -34,42 +49,40 @@ contract VaultImpl is VaultImplStorage, Initializable, ShareBase {
         _;
     }
 
-    modifier onlyComptroller() {
-        _checkComptrollerCall();
-        _;
-    }
-
-    function _checkComptrollerCall() private view {
-        require(
-            msg.sender == IRegistry(registry).getComptroller(),
-            "VaultImpl: caller is not the comptroller"
-        );
-    }
-
-    function mint(address _to, uint256 _amount) external onlyComptroller {
+    function mint(address _to, uint256 _amount) external onlyDuringComptrollerFlow {
         _mint(_to, _amount);
     }
 
-    function burn(address _from, uint256 _amount) external onlyComptroller {
+    function burn(address _from, uint256 _amount) external onlyDuringComptrollerFlow {
         _burn(_from, _amount);
     }
 
-    function withdrawTo(address _to, address _asset, uint256 _amount) external onlyComptroller {
-        IERC20(_asset).transfer(_to, _amount);
+    function withdrawTo(
+        address _to,
+        address _asset,
+        uint256 _amount
+    ) external onlyDuringComptrollerFlow {
+        IERC20(_asset).safeTransfer(_to, _amount);
+        emit WithdrawTo(_to, _asset, _amount);
     }
 
-    function withdrawNativeTo(address _to, uint256 _amount) external onlyComptroller {
+    function withdrawNativeTo(address _to, uint256 _amount) external onlyDuringComptrollerFlow {
         (bool ok, ) = _to.call{value: _amount}("");
         require(ok, "VaultImpl: native transfer failed");
     }
 
     //先完成逻辑 后面再风控
-    function approveToStrategy(address _strategy, uint256 _amount) external onlyComptroller {
+    function approveToStrategy(
+        address _strategy,
+        uint256 _amount
+    ) external onlyDuringComptrollerFlow {
         address denomination = denominationAsset;
         IERC20(denomination).approve(_strategy, 0);
         IERC20(denomination).approve(_strategy, _amount);
         emit ApprovalToStrategy(_strategy, _amount);
     }
+
+    function _validateApproval() internal view {}
 
     receive() external payable {
         if (msg.value == 0) return;

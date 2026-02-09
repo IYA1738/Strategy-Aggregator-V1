@@ -126,4 +126,29 @@ library VaultDataBitParse {
     function getFlags(uint256 word) internal pure returns (bool, bool, bool) {
         return (isActive(word), isPaused(word), isReentrantGuard(word));
     }
+
+    // ===== Aliases used across the codebase =====
+    function getDepositFeeBPS(uint256 word) internal pure returns (uint16) {
+        return depositFeeRate(word);
+    }
+
+    function getWithdrawFeeBPS(uint256 word) internal pure returns (uint16) {
+        return withdrawFeeRate(word);
+    }
+
+    function getMinDepositAmountE18(uint256 word) internal pure returns (uint96) {
+        return minDepositAmountE18(word);
+    }
+
+    function getRedeemCooldownTime(uint256 word) internal pure returns (uint32) {
+        return uint32(coolDown(word));
+    }
+
+    function getMinIdleRate(uint256 word) internal pure returns (uint16) {
+        return minIdleRate(word);
+    }
+
+    function getMaxDeployFundRate(uint256 word) internal pure returns (uint16) {
+        return maxDeployFundRate(word);
+    }
 }
